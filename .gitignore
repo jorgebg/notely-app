@@ -24,3 +24,14 @@ Thumbs.db
 service-account*.json
 terraform.tfvars
 .env.deploy
+
+# Terraform: local state, plans, providers, the demo's environment (holds the project IDs)
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+infra/demo.env
+infra/offstage/guard/function.zip
+infra/offstage/.last-spend.json
+infra/rehearsal/
+infra/graph.svg

@@ -102,12 +102,29 @@ async function postgresRepository() {
     password,
     database: process.env.DB_NAME || 'notely',
     max: 5,
+    connectionTimeoutMillis: 5000,
     // Cloud SQL private IP traffic stays inside the VPC. To enforce TLS as well,
     // set DB_SSL=true (and require SSL on the instance with --ssl-mode).
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
   });
 
-  await pool.query(SCHEMA);
+  // An idle connection that breaks (the database restarted) must not take the
+  // whole process down: the pool drops it and opens a new one on the next query.
+  pool.on('error', err => console.error(JSON.stringify({ severity: 'WARNING',
+    message: 'idle database connection lost', detail: err.message })));
+
+  // The database may still be starting (a VM that boots alongside this
+  // service): retry for up to DB_STARTUP_WAIT_S seconds before giving up.
+  const deadline = Date.now() + Number(process.env.DB_STARTUP_WAIT_S || 180) * 1000;
+  for (;;) {
+    try { await pool.query(SCHEMA); break; }
+    catch (err) {
+      if (Date.now() > deadline) throw err;
+      console.log(JSON.stringify({ severity: 'INFO',
+        message: 'database not ready, retrying in 5 s', detail: err.message }));
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
 
   return {
     kind: 'postgres',
