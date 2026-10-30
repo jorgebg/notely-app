@@ -1,10 +1,13 @@
-# One Cloud Run service that anyone may call, scaling from zero.
+# One Cloud Run service, scaling from zero. allUsers may invoke it; ingress decides from where.
 resource "google_cloud_run_v2_service" "this" {
   name                = var.name
   location            = var.location
   deletion_protection = false # the demo ends with terraform destroy
+  ingress             = var.ingress
 
   template {
+    service_account = var.service_account
+
     # Zero or one vpc_access block, depending on var.vpc: an optional block.
     dynamic "vpc_access" {
       for_each = var.vpc == null ? [] : [var.vpc]
@@ -32,6 +35,19 @@ resource "google_cloud_run_v2_service" "this" {
         content {
           name  = env.key
           value = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.secret_env
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret
+              version = env.value.version
+            }
+          }
         }
       }
     }

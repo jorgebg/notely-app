@@ -1,0 +1,64 @@
+#cloud-config
+# The database VM (Container-Optimized OS). Runs PostgreSQL 16 in a container, data on the
+# separate disk "pgdata". Rendered by templatefile(): the dollar-brace placeholders are Terraform values.
+write_files:
+  - path: /etc/notely/start.sh
+    permissions: "0644"
+    content: |
+      # Before PostgreSQL starts, on every boot.
+      set -euo pipefail
+      # 1. The data disk: format it the first time, mount it every time.
+      DEV=/dev/disk/by-id/google-pgdata
+      MNT=/mnt/disks/pgdata
+      blkid "$DEV" >/dev/null 2>&1 || mkfs.ext4 -q -m 0 -F "$DEV"
+      mkdir -p "$MNT"
+      mountpoint -q "$MNT" || mount -o discard,defaults "$DEV" "$MNT"
+      # 2. The password, read from Secret Manager with the VM's own identity (never in metadata).
+      md=http://metadata.google.internal/computeMetadata/v1
+      token=$(curl -sf --retry 10 --retry-connrefused -H 'Metadata-Flavor: Google' \
+        "$md/instance/service-accounts/default/token" | sed -E 's/.*"access_token" *: *"([^"]+)".*/\1/')
+      data=$(curl -sf --retry 10 -H "Authorization: Bearer $token" \
+        "https://secretmanager.googleapis.com/v1/${secret}/versions/latest:access" \
+        | tr -d '\n ' | sed -E 's/.*"data":"([^"]+)".*/\1/')
+      install -d -m 700 /run/notely
+      ( umask 077; printf 'POSTGRES_PASSWORD=%s\n' "$(base64 -d <<<"$data")" > /run/notely/pg.env )
+      # 3. Credentials to pull the image from our registry.
+      docker-credential-gcr configure-docker --registries=${registry_host} >/dev/null
+  - path: /etc/notely/sync-password.sh
+    permissions: "0644"
+    content: |
+      # Secret Manager holds the truth. PostgreSQL only reads POSTGRES_PASSWORD when it
+      # initialises an empty disk, so set it again on every start.
+      set -euo pipefail
+      for i in $(seq 90); do docker exec postgres pg_isready -q -h 127.0.0.1 -U notely && break; sleep 2; done
+      pw=$(sed -n 's/^POSTGRES_PASSWORD=//p' /run/notely/pg.env)
+      docker exec -i postgres psql -q -v ON_ERROR_STOP=1 -U notely -d notely <<SQL
+      ALTER USER notely PASSWORD '$pw';
+      SQL
+  - path: /etc/systemd/system/notely-db.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=PostgreSQL for Notely
+      Wants=network-online.target
+      After=network-online.target docker.service
+      Requires=docker.service
+
+      [Service]
+      Environment=HOME=/var/lib/notely
+      ExecStartPre=/bin/mkdir -p /var/lib/notely
+      ExecStartPre=/bin/bash /etc/notely/start.sh
+      ExecStartPre=-/usr/bin/docker rm -f postgres
+      ExecStart=/usr/bin/docker run --rm --name postgres -p 5432:5432 \
+        --env-file /run/notely/pg.env -e POSTGRES_USER=notely -e POSTGRES_DB=notely \
+        -e PGDATA=/var/lib/postgresql/data/pgdata -v /mnt/disks/pgdata:/var/lib/postgresql/data \
+        ${image}
+      ExecStartPost=/bin/bash /etc/notely/sync-password.sh
+      ExecStop=/usr/bin/docker stop postgres
+      Restart=always
+      RestartSec=5
+      TimeoutStartSec=600
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl start notely-db.service
