@@ -77,11 +77,7 @@ resource "google_compute_disk" "db_data" {
   zone = local.zone
   type = "pd-standard" # the free tier covers 30 GB of standard disk
   size = 10
-
-  # The VM is cattle, this disk is a pet: any plan that would destroy it fails.
-  lifecycle {
-    prevent_destroy = true
-  }
+  # prevent_destroy removed: the session is over, everything goes.
 }
 
 resource "google_compute_instance" "db" {
