@@ -9,7 +9,7 @@ module "api" {
   ingress         = "INGRESS_TRAFFIC_INTERNAL_ONLY" # the internet gets a 404
   env = {
     ATTACHMENTS_BUCKET = google_storage_bucket.attachments.name
-    DB_HOST            = google_compute_address.db.address
+    DB_HOST            = google_sql_database_instance.notely.private_ip_address # was the VM
   }
   secret_env = {
     DB_PASSWORD = {
