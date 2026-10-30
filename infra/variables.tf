@@ -12,3 +12,13 @@ variable "region" {
 locals {
   app = "notely" # prefix of every name
 }
+
+variable "alert_email" {
+  description = "Where alerts are sent"
+  type        = string
+}
+
+variable "notification_channel" {
+  description = "The e-mail channel created by hand in the console: projects/<id>/notificationChannels/<number>"
+  type        = string
+}
